@@ -1,0 +1,334 @@
+---
+title: "MM916 Regression Projet"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+date: "2023-11-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(GGally)
+# Read in the data
+real_est <- read.csv("real_est.csv", header=TRUE)
+```
+
+
+```{r Summary Statistics}
+summary(real_est)
+var(real_est$Price)
+```
+
+Finding the relationship between numeric predictor variables and Price
+
+```{r Scatterplot for Price vs other numeric variables}
+par(mfrow=c(3, 3))
+par(mar=c(4, 4, 2, 2))
+variables <- c('Bedroom', 'Space', 'Room', 'Lot', 'Tax', 'Bathroom', 'Garage')
+for (var in variables) {
+ plot(real_est[[var]], real_est$Price,
+ ylab = 'Price',
+ xlab = var,
+ col = 'darkgreen',
+ pch = 19)
+ lines(lowess(real_est[[var]], real_est$Price), col = 'red')
+}
+ggsave("plot.png", width = 6, height = 4)
+
+```
+
+
+Finding the relationship between categorical variable with other variables and target variable
+
+```{r Density plot for Condition interaction}
+library(ggplot2)
+library(patchwork)
+
+options(repr.plot.width = 14, repr.plot.height = 12, repr.plot.res = 100)
+options(repr.plot.width = 20, repr.plot.height = 12, repr.plot.res = 100)
+
+numeric_vars <- c("Price", "Room", "Bedroom", "Space", "Garage", "Lot", "Tax", "Bathroom")
+
+density_plots <- lapply(numeric_vars, function(var) {
+  ggplot(real_est, aes(x = !!as.name(var), fill = factor(Condition))) +
+    geom_density(alpha = 0.5) +
+    labs(title = paste( var), x = var, y = "Density") +
+    scale_fill_discrete(name = "Condition")
+})
+
+plots_arranged <- wrap_plots(density_plots, nrow = 3) +
+  plot_layout(guides = "collect", widths = c(6, 6, 4))
+plots_arranged
+
+ggsave("condition.png", width = 6, height = 4)
+
+```
+
+
+The below correlation matrix is used to analyze the relationship between target variable Price and other independent variables
+
+```{r Correlation analysis}
+library(corrplot)
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(real_est)
+
+# Define the order of variables
+desired_order <- c("Price", "Bedroom", "Space", "Room", "Lot", "Tax", "Garage", "Bathroom", "Condition")
+
+# Reorder the correlation matrix based on desired order
+reordered <- correlation_matrix[desired_order, desired_order]
+
+# Use a divergent color scale for the correlation plot
+corrplot(
+  reordered,
+  method = "color",
+  type = "upper",
+  col = colorRampPalette(c("darkblue", "white"))(100),  # Divergent color scale
+  tl.col = "black",
+  tl.srt = 45,
+  addCoef.col = "black",
+  number.cex = 0.7,
+  order = "original",
+  addrect = 2,
+  diag = FALSE,
+  mar = c(0, 0, 2, 0)
+)
+
+```
+
+A model is build using the above correlation matrix.
+```{r Initial Linear Model}
+real_est_mod <- lm(Price~ Bedroom+Space+Room+Lot+Tax+Bathroom+Garage+Condition, data=real_est)
+summary(real_est_mod)
+```
+
+
+
+
+```{r Checking model assumptions}
+par(mfrow=c(2,2), mar=c(4.5,4,2,2))
+plot(real_est_mod)
+require(ggfortify)
+autoplot(real_est_mod)
+
+```
+
+
+```{r Independence of error - Residuals vs Fitted Plot}
+
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))  # Increase bottom margin to 2
+
+# Plotting studentized residuals against each independent variable
+for (i in names(real_est)[2:7]) {
+  plot(real_est[[i]], rstudent(real_est_mod),
+       xlab = i, ylab = "Studentized Residuals",
+       main = paste("Residuals vs", i),
+       col = "coral")
+}
+```
+
+```{r BoxCox transformation}
+library(MASS)
+bc_real_est <- boxcox(real_est_mod)
+bc_bedroom <- boxcox(lm(Bedroom ~ 1, data = real_est))
+bc_room <- boxcox(lm(Room ~ 1, data = real_est))
+bc_space <- boxcox(lm(Space ~ 1, data = real_est))
+bc_lot <- boxcox(lm(Lot ~ 1, data = real_est))
+bc_tax <- boxcox(lm(Tax ~ 1, data = real_est))
+bc_bathroom <- boxcox(lm(Bathroom ~ 1, data = real_est))
+bc_garage <- boxcox(lm((Garage+0.01) ~ 1, data = real_est))
+
+optimal_lambda_bedroom <- bc_bedroom$x[which.max(bc_bedroom$y)]
+optimal_lambda_room <- bc_room$x[which.max(bc_room$y)]
+optimal_lambda_space <- bc_space$x[which.max(bc_space$y)]
+optimal_lambda_lot <- bc_lot$x[which.max(bc_lot$y)]
+optimal_lambda_tax <- bc_tax$x[which.max(bc_tax$y)]
+optimal_lambda_bathroom <- bc_bathroom$x[which.max(bc_bathroom$y)]
+optimal_lambda_garage <- bc_garage$x[which.max(bc_garage$y)]
+
+# Display optimal lambda values
+optimal_lambda_values <- data.frame(
+  Variable = c("Bedroom", "Room", "Space", "Lot", "Tax", "Bathroom", "Garage"),
+  Optimal_Lambda = c(
+    optimal_lambda_bedroom,
+    optimal_lambda_room,
+    optimal_lambda_space,
+    optimal_lambda_lot,
+    optimal_lambda_tax,
+    optimal_lambda_bathroom,
+    optimal_lambda_garage
+  )
+)
+
+optimal_lambda_values$Optimal_Lambda <- round(optimal_lambda_values$Optimal_Lambda,1)
+optimal_lambda_values
+
+```
+
+
+
+
+```{r Transforming variables}
+#transforming the variables according the lambda values
+transformed_real_est <- real_est
+
+transformed_real_est$Bedroom <- log(real_est$Bedroom)
+transformed_real_est$Room <- real_est$Room^(-1)
+transformed_real_est$Space <- real_est$Space^(-1)
+transformed_real_est$Lot <- real_est$Lot^(-2)
+transformed_real_est$Tax <- real_est$Tax^(-1)
+transformed_real_est$Bathroom <- real_est$Bathroom^(-1)
+transformed_real_est$Garage <- log((real_est$Garage+0.01))
+
+head(transformed_real_est)
+```
+
+```{r Distribution of variables after transformation}
+par(mfrow=c(2, 2))
+variables <- c('Price', 'Space', 'Garage', 'Lot', 'Bedroom', 'Bathroom', 'Room', 'Tax')
+for (var in variables) {
+  hist(transformed_real_est[[var]], main="", xlab=var, ylab="Frequency", col="skyblue", border="black", breaks=20)
+}
+```
+
+```{r }
+transformed_real_est_mod <- lm(Price~ Bedroom+Space+Room+Lot+Tax+Bathroom+Garage+Condition, data=transformed_real_est)
+summary(transformed_real_est_mod)
+```
+
+```{r transformation without changing Garage}
+transformed_real_est1 <- real_est
+
+transformed_real_est1$Bedroom <- log(real_est$Bedroom)
+transformed_real_est1$Room <- real_est$Room^(-1)
+transformed_real_est1$Space <- real_est$Space^(-1)
+transformed_real_est1$Lot <- real_est$Lot^(-2)
+transformed_real_est1$Tax <- real_est$Tax^(-1)
+transformed_real_est1$Garage <- real_est$Garage
+transformed_real_est1$Bathroom <- real_est$Bathroom
+```
+
+```{r transformed model considered henceforth}
+transformed_real_est1_mod <- lm(Price~ Bedroom+Space+Room+Lot+Tax+Bathroom+Garage+Condition, data=transformed_real_est)
+summary(transformed_real_est1_mod)
+```
+
+
+```{r Checking model assumptions after transformation}
+par(mfrow=c(2,2), mar=c(4.5,4,2,2))
+plot(transformed_real_est1_mod)
+require(ggfortify)
+autoplot(transformed_real_est1_mod)
+
+```
+
+
+
+```{r}
+library(car)
+vif_results <- car::vif(transformed_real_est1_mod)
+vif_results
+```
+
+```{r Handling categorical variables}
+#categorical interaction:
+categorical_full_mod <- lm(Price ~ Bedroom + Space + Room + Lot + Tax + Bathroom + Garage + Condition + Bedroom:Condition + 
+                           Space:Condition + Room:Condition +  Lot:Condition + Tax:Condition + Bathroom:Condition +Garage:Condition, data = transformed_real_est1)
+summary(categorical_full_mod)
+```
+
+```{r Handling categorical variables removing insignifcant variables}
+#categorical interaction:
+categorical_full_mod2 <- lm(Price ~ Bedroom + Space + Room + Lot + Tax + Bathroom + Garage + Condition +  Bathroom:Condition, data = transformed_real_est1)
+summary(categorical_full_mod2)
+AIC(categorical_full_mod2)
+```
+```{r}
+anova(categorical_full_mod, categorical_full_mod2)
+```
+
+
+```{r Backward Elimination}
+full_mod <- lm(Price ~ Bedroom + Space + Room + Lot + Tax + Bathroom + Garage + Condition +  Bathroom:Condition, data = transformed_real_est1)
+drop1(full_mod, scope = ~Bedroom + Space + Room + Lot + Tax + Bathroom + Garage + Condition +  Bathroom:Condition, data = transformed_real_est1, test = "F")
+```
+
+```{r}
+#removing insignificant Room variable
+back_mod1 <- lm(Price ~ Bedroom + Space  + Lot + Tax + Bathroom + Garage + Condition +  Bathroom:Condition, data = transformed_real_est1)
+drop1(back_mod1, scope = ~Bedroom + Space  + Lot + Tax + Bathroom + Garage + Condition +  Bathroom:Condition, data = transformed_real_est1, test = "F")
+```
+```{r}
+summary(back_mod1)
+```
+Stopping the variable selection as all variables are significant
+
+```{r checking model score}
+AIC(full_mod)
+AIC(back_mod1)
+```
+
+```{r Step Method}
+library(car)
+step_mod <- step(categorical_full_mod2)
+summary(step_mod)
+car::vif(step_mod, type = 'predictor') #GVIF^(1/(2*DF)) should be less than 2
+```
+
+```{r}
+summary(step_mod)
+```
+
+```{r}
+AIC(real_est_mod)
+AIC(transformed_real_est1_mod)
+AIC(categorical_full_mod2)
+AIC(back_mod1)
+AIC(step_mod)
+```
+```{r}
+summary(real_est_mod)
+summary(transformed_real_est1_mod)
+summary(categorical_full_mod2)
+summary(back_mod1)
+summary(step_mod)
+```
+```{r}
+final_mod <- step_mod
+summary(final_mod)
+```
+```{r}
+par(mfrow=c(2,2), mar=c(4.5,4,2,2))
+plot(final_mod)
+require(ggfortify)
+autoplot(final_mod)
+```
+
+```{r Multicollinearty}
+vif_results <- car::vif(final_mod)
+
+# View the VIF values
+vif_results
+
+```
+
+```{r}
+final_model <- lm(Price ~ Bedroom + Space + Lot + Tax + Bathroom + Garage + Condition + Bathroom:Condition, data = transformed_real_est1)
+
+coefficients <- coef(final_model)
+formula <- as.formula(final_model)
+
+# Getting variable names
+variables <- all.vars(formula)[-1]  # Excluding the intercept
+
+# Constructing the equation with variable names
+equation <- paste("Price =", paste(coefficients[2:length(coefficients)], variables, sep = " * ", collapse = " + "), collapse = " ")
+intercept <- coefficients[1]  # Intercept value
+equation_with_intercept <- paste(equation, intercept, sep = " + ")
+equation_with_intercept
+
+
+```
